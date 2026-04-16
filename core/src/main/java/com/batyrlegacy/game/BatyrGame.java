@@ -1,32 +1,35 @@
 package com.batyrlegacy.game;
 
-import com.badlogic.gdx.ApplicationAdapter;
-import com.badlogic.gdx.graphics.Texture;
-import com.badlogic.gdx.graphics.g2d.SpriteBatch;
-import com.badlogic.gdx.utils.ScreenUtils;
+import com.badlogic.gdx.Game;
+import com.batyrlegacy.game.screens.MenuScreen;
+import com.batyrlegacy.game.assets.ResourceManager;
 
-/** {@link com.badlogic.gdx.ApplicationListener} implementation shared by all platforms. */
-public class BatyrGame extends ApplicationAdapter {
-    private SpriteBatch batch;
-    private Texture image;
+
+/** * Теперь это MainGame.
+ * Он наследует Game, что позволяет использовать метод setScreen().
+ */
+public class BatyrGame extends Game {
 
     @Override
     public void create() {
-        batch = new SpriteBatch();
-        image = new Texture("libgdx.png");
+        // 1. Инициализируем синглтон ресурсов (загружаем картинки)
+        ResourceManager.getInstance();
+        this.setScreen(new MenuScreen(this));
+        // 2. Устанавливаем самый первый экран (Состояние: Меню)
+        // Мы передаем 'this', чтобы экран мог переключить состояние обратно на игру
+        setScreen(new MenuScreen(this));
     }
 
     @Override
     public void render() {
-        ScreenUtils.clear(0.15f, 0.15f, 0.2f, 1f);
-        batch.begin();
-        batch.draw(image, 140, 210);
-        batch.end();
+        // Это важно! Метод super.render() заставляет текущий экран рисоваться
+        super.render();
     }
 
     @Override
     public void dispose() {
-        batch.dispose();
-        image.dispose();
+        // Очищаем память при закрытии
+        super.dispose();
+        ResourceManager.getInstance().dispose();
     }
 }
