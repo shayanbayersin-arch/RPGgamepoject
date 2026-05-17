@@ -1,10 +1,9 @@
 package com.batyrlegacy.game.screens;
-
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.ScreenAdapter;
 import com.badlogic.gdx.graphics.Color;
-import com.badlogic.gdx.graphics.GL20; // Импорт для поддержки прозрачности
+import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.Animation;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
@@ -29,9 +28,9 @@ public class PlayScreen extends ScreenAdapter {
     private Texture mapTexture;
     private BitmapFont pixelFont;
 
-    private Texture attackSheet1, attackSheet2, jungarSheet;
+    private Texture attackSheet1, attackSheet2, jungarSheet, deathSheet;
     private Texture[] playerHpTextures;
-    private Animation<TextureRegion> playerIdleAnim, playerRunAnim;
+    private Animation<TextureRegion> playerIdleAnim, playerRunAnim, playerDeathAnim;
 
     private AttackStrategy currentStrategy;
     private BowAttack activeBowAttack;
@@ -48,6 +47,12 @@ public class PlayScreen extends ScreenAdapter {
     private boolean isJungarSpawned = false;
     private boolean playerHitRegistered = false;
 
+    // Новая система смерти
+    private boolean isPlayerDead = false;
+    private float deathTimer = 0f;
+    private boolean showDeathMessage = false;
+
+    // Система уровней и победы
     private int jungarLevel = 1;
     private boolean showWinMessage = false;
     private float winMessageTimer = 0f;
@@ -80,6 +85,11 @@ public class PlayScreen extends ScreenAdapter {
         playerIdleAnim = createAnim(new Texture(Gdx.files.internal("_idle.png")), 0, 10, 120, 80, 0.1f);
         playerRunAnim = createAnim(new Texture(Gdx.files.internal("_Run.png")), 0, 10, 120, 80, 0.08f);
 
+        // ЗАГРУЗКА АНИМАЦИИ СМЕРТИ (10 кадров по 0.1 сек)
+        deathSheet = new Texture(Gdx.files.internal("_Death.png"));
+        playerDeathAnim = createAnim(deathSheet, 0, 10, 120, 80, 0.1f);
+        playerDeathAnim.setPlayMode(Animation.PlayMode.NORMAL); // Проигрывается один раз
+
         attackSheet1 = new Texture(Gdx.files.internal("_Attack.png"));
         attackSheet2 = new Texture(Gdx.files.internal("_Attack2.png"));
         jungarSheet = new Texture(Gdx.files.internal("jungar_sheet.png"));
@@ -90,7 +100,7 @@ public class PlayScreen extends ScreenAdapter {
         ScreenUtils.clear(0, 0, 0, 1);
         stateTime += delta;
 
-        // Таймер победы
+        // --- ЛОГИКА ТАЙМЕРА ПОБЕДЫ ---
         if (showWinMessage) {
             winMessageTimer += delta;
             if (winMessageTimer > 3.0f) {
@@ -99,8 +109,36 @@ public class PlayScreen extends ScreenAdapter {
             }
         }
 
-        // Блокировка ввода во время триумфа
-        if (playerAttackType == 0 && !showWinMessage) {
+        // --- ЛОГИКА ТАЙМЕРА СМЕРТИ ---
+        if (isPlayerDead) {
+            deathTimer += delta;
+
+            // 1.5 сек. — Батыр застывает на месте и ждет
+            // С 1.5 сек. до 2.5 сек. — проигрывается анимация смерти (падание)
+            // С 2.5 сек. до 6.5 сек. — включается затемнение и текст «You Died!»
+
+            if (deathTimer > 2.5f && !showDeathMessage) {
+                showDeathMessage = true; // Включаем притемнение и надпись
+            }
+
+            if (deathTimer > 6.5f) { // Спустя 6.5 секунд — РЕСПАВН
+                isPlayerDead = false;
+                showDeathMessage = false;
+                deathTimer = 0f;
+                playerCurrentHp = playerMaxHp; // Восстанавливаем HP
+                playerPos.set(300, 200);       // Телепорт на старт
+                isJungarSpawned = false;       // Сбрасываем босса
+
+                // Сбрасываем анимацию смерти, чтобы она могла проиграться снова
+                stateTime = 0f;
+                playerDeathAnim.setPlayMode(Animation.PlayMode.NORMAL);
+            }
+        }
+
+        // --- БЛОКИРОВКА ВВОДА (Отключаем атаки и движение, если мертвы или празднуем победу) ---
+        boolean controlsBlocked = showWinMessage || isPlayerDead;
+
+        if (playerAttackType == 0 && !controlsBlocked) {
             if (Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
                 currentStrategy = new SwordAttack(attackSheet1);
                 playerAttackType = 1;
@@ -122,7 +160,7 @@ public class PlayScreen extends ScreenAdapter {
             }
         }
 
-        // Обновление физики стрелы
+        // Логика физики стрелы
         if (activeBowAttack != null && activeBowAttack.hasArrow) {
             activeBowAttack.updateArrow(delta);
             if (isJungarSpawned && activeBowAttack.arrowPos.dst(currentEnemy.pos) < 50) {
@@ -136,7 +174,7 @@ public class PlayScreen extends ScreenAdapter {
         }
 
         // Урон ближнего боя
-        if (playerAttackType != 0 && playerAttackType != 3 && currentStrategy != null) {
+        if (playerAttackType != 0 && playerAttackType != 3 && currentStrategy != null && !isPlayerDead) {
             playerAttackTime += delta;
             if (!playerHitRegistered && playerAttackTime > 0.14f && isJungarSpawned) {
                 if (playerPos.dst(currentEnemy.pos) < 90) {
@@ -147,14 +185,14 @@ public class PlayScreen extends ScreenAdapter {
             if (playerAttackTime > currentStrategy.getDuration()) playerAttackType = 0;
         }
 
-        if (playerAttackType == 3 && currentStrategy != null) {
+        if (playerAttackType == 3 && currentStrategy != null && !isPlayerDead) {
             playerAttackTime += delta;
             if (playerAttackTime > currentStrategy.getDuration()) playerAttackType = 0;
         }
 
         // Движение игрока
         isPlayerMoving = false;
-        if (playerAttackType == 0 && !showWinMessage) {
+        if (playerAttackType == 0 && !controlsBlocked) {
             Vector2 input = new Vector2();
             if (Gdx.input.isKeyPressed(Input.Keys.W)) { input.y += 1; isPlayerMoving = true; }
             if (Gdx.input.isKeyPressed(Input.Keys.S)) { input.y -= 1; isPlayerMoving = true; }
@@ -164,7 +202,7 @@ public class PlayScreen extends ScreenAdapter {
         }
 
         // Спавн моба
-        if (!isJungarSpawned && !showWinMessage && arenaTrigger.contains(playerPos.x, playerPos.y) && jungarLevel <= 3) {
+        if (!isJungarSpawned && !controlsBlocked && arenaTrigger.contains(playerPos.x, playerPos.y) && jungarLevel <= 3) {
             isJungarSpawned = true;
             currentEnemy = EnemyFactory.createEnemy(jungarLevel, jungarSheet);
             currentEnemy.pos.set(1020, 320);
@@ -178,23 +216,38 @@ public class PlayScreen extends ScreenAdapter {
             if (currentEnemy.isAttacking) {
                 currentEnemy.attackTime += delta;
                 if (!currentEnemy.hitRegistered && currentEnemy.attackTime > 0.45f) {
-                    if (dist < 60) playerCurrentHp -= currentEnemy.damage;
+                    if (dist < 60) {
+                        playerCurrentHp -= currentEnemy.damage;
+                        // ТРИГГЕР СМЕРТИ БАТЫРА: Здоровье упало до 0
+                        if (playerCurrentHp <= 0 && !isPlayerDead) {
+                            playerCurrentHp = 0;
+                            isPlayerDead = true; // Включаем режим смерти
+                            deathTimer = 0f;
+                            stateTime = 0f;    // Сбрасываем время анимации, чтобы смерть началась с 0 кадра
+                        }
+                    }
                     currentEnemy.hitRegistered = true;
                 }
                 if (currentEnemy.attackTime > 0.90f) currentEnemy.isAttacking = false;
             } else {
                 if (dist < 50) {
-                    currentEnemy.isAttacking = true;
-                    currentEnemy.attackTime = 0;
-                    currentEnemy.hitRegistered = false;
+                    // Босс перестает атаковать, если Батыр уже мертв
+                    if (!isPlayerDead) {
+                        currentEnemy.isAttacking = true;
+                        currentEnemy.attackTime = 0;
+                        currentEnemy.hitRegistered = false;
+                    }
                 } else {
                     currentEnemy.isMoving = true;
-                    currentEnemy.pos.add(playerPos.cpy().sub(currentEnemy.pos).nor().scl(130 * delta));
+                    // Если Батыр мертв, босс тоже замирает, а не бегает вокруг трупа
+                    if (!isPlayerDead) {
+                        currentEnemy.pos.add(playerPos.cpy().sub(currentEnemy.pos).nor().scl(130 * delta));
+                    }
                 }
             }
 
             // Победный триггер
-            if (currentEnemy.currentHp <= 0) {
+            if (currentEnemy.currentHp <= 0 && !isPlayerDead) {
                 isJungarSpawned = false;
                 showWinMessage = true;
                 winMessageTimer = 0f;
@@ -216,36 +269,72 @@ public class PlayScreen extends ScreenAdapter {
             batch.draw(jFrame, currentEnemy.pos.x - w/2, currentEnemy.pos.y - h/2, w, h);
         }
 
-        Animation<TextureRegion> pAnim = (playerAttackType != 0) ? currentStrategy.getAnimation() : (isPlayerMoving ? playerRunAnim : playerIdleAnim);
-        TextureRegion pFrame = pAnim.getKeyFrame(playerAttackType != 0 ? playerAttackTime : stateTime, playerAttackType == 0);
-        if (playerFacingLeft && !pFrame.isFlipX()) pFrame.flip(true, false);
-        if (!playerFacingLeft && pFrame.isFlipX()) pFrame.flip(false, false);
+        // Отрисовка Батыра
+        Animation<TextureRegion> pAnim;
+        float pTime;
+        boolean pLoop;
+
+        // ВЫБОР АНИМАЦИИ: Мертв, бьет или бежит?
+        if (isPlayerDead) {
+            if (deathTimer < 1.5f) { // 1.5 сек задержки перед падением
+                pAnim = playerIdleAnim; // Застыл в Idle
+                pTime = 0f;            // 0 кадр застывший
+                pLoop = false;
+            } else { // Анимация падения пошла
+                pAnim = playerDeathAnim;
+                pTime = deathTimer - 1.5f; // Вычитаем время задержки
+                pLoop = false; // Проигрывается 1 раз
+            }
+        } else if (playerAttackType != 0) {
+            pAnim = currentStrategy.getAnimation();
+            pTime = playerAttackTime;
+            pLoop = false;
+        } else if (isPlayerMoving) {
+            pAnim = playerRunAnim;
+            pTime = stateTime;
+            pLoop = true;
+        } else {
+            pAnim = playerIdleAnim;
+            pTime = stateTime;
+            pLoop = true;
+        }
+
+        TextureRegion pFrame = pAnim.getKeyFrame(pTime, pLoop);
+
+        // Поворот, только если живой. Мертвый труп не крутится.
+        if (!isPlayerDead) {
+            if (playerFacingLeft && !pFrame.isFlipX()) pFrame.flip(true, false);
+            if (!playerFacingLeft && pFrame.isFlipX()) pFrame.flip(false, false);
+        }
+
         batch.draw(pFrame, playerPos.x - 60, playerPos.y - 40, 120, 80);
 
+        // Рисуем UI здоровья Батыра
         int uiIndex = Math.max(0, Math.min(9, (int)(playerCurrentHp / 10) - 1));
         if (playerCurrentHp > 0) {
             batch.draw(playerHpTextures[uiIndex], 1100, 650, 160, 50);
         }
         batch.end();
 
-        // --- 2. ЭФФЕКТ ПРИТЕМНЕНИЯ ЭКРАНА (SHAPERENDERER В РЕЖИМЕ BLENDING) ---
-        if (showWinMessage) {
-            // Включаем альфа-смешивание OpenGl для работы прозрачности
+        // --- 2. ЭФФЕКТЫ ПРИТЕМНЕНИЯ ЭКРАНА (YOU WIN ИЛИ YOU DIED) ---
+        boolean shouldDarken = showWinMessage || showDeathMessage;
+
+        if (shouldDarken) {
             Gdx.gl.glEnable(GL20.GL_BLEND);
             Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
 
             shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
-            // Рисуем черный прямоугольник на весь экран, альфа = 0.5f (50% затемнения)
+            // Черный оверлей на 50% прозрачности
             shapeRenderer.setColor(new Color(0, 0, 0, 0.5f));
             shapeRenderer.rect(0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
             shapeRenderer.end();
 
-            Gdx.gl.glDisable(GL20.GL_BLEND); // Выключаем смешивание, чтобы не портить другие фигуры
+            Gdx.gl.glDisable(GL20.GL_BLEND);
         }
 
-        // --- 3. ОТРИСОВКА ТЕКСТА ПОБЕДЫ ПОВЕРХ ЗАТЕМНЕНИЯ ---
+        // --- 3. ОТРИСОВКА ТЕКСТА ПОВЕРХ ЗАТЕМНЕНИЯ ---
+        batch.begin();
         if (showWinMessage) {
-            batch.begin();
             pixelFont.setColor(Color.GOLD);
             pixelFont.draw(batch, "YOU WIN!", 540, 420);
 
@@ -255,8 +344,14 @@ public class PlayScreen extends ScreenAdapter {
             } else {
                 pixelFont.draw(batch, "Moving to Level " + jungarLevel + "...", 440, 350);
             }
-            batch.end();
+        } else if (showDeathMessage) { // ТЕКСТ ПОРАЖЕНИЯ
+            pixelFont.setColor(Color.GOLD);
+            pixelFont.draw(batch, "YOU DIED!", 540, 420);
+
+            pixelFont.setColor(Color.WHITE);
+            pixelFont.draw(batch, "Defeat is not the end. Respawning...", 360, 350);
         }
+        batch.end();
 
         // Обычные интерфейсы стрел и здоровья босса
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
@@ -274,12 +369,6 @@ public class PlayScreen extends ScreenAdapter {
             shapeRenderer.rect(jBarX, jBarY, (currentEnemy.currentHp / currentEnemy.maxHp) * jBarWidth, 6);
         }
         shapeRenderer.end();
-
-        if (playerCurrentHp <= 0) {
-            playerCurrentHp = playerMaxHp;
-            playerPos.set(300, 200);
-            isJungarSpawned = false;
-        }
     }
 
     private Animation<TextureRegion> createAnim(Texture sheet, int row, int cols, int width, int height, float duration) {
@@ -300,6 +389,7 @@ public class PlayScreen extends ScreenAdapter {
         attackSheet1.dispose();
         attackSheet2.dispose();
         jungarSheet.dispose();
+        deathSheet.dispose(); // Не забываем очистить текстуру смерти
         for (Texture t : playerHpTextures) if (t != null) t.dispose();
     }
 }
