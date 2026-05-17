@@ -6,6 +6,7 @@ import com.badlogic.gdx.ScreenAdapter;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.Animation;
+import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
@@ -25,13 +26,14 @@ public class PlayScreen extends ScreenAdapter {
     private SpriteBatch batch;
     private ShapeRenderer shapeRenderer;
     private Texture mapTexture;
+    private BitmapFont pixelFont; // Шрифт для вывода надписи победы
 
     private Texture attackSheet1, attackSheet2, jungarSheet;
     private Texture[] playerHpTextures;
     private Animation<TextureRegion> playerIdleAnim, playerRunAnim;
 
     private AttackStrategy currentStrategy;
-    private BowAttack activeBowAttack; // For arrow updates
+    private BowAttack activeBowAttack;
     private Enemy currentEnemy;
 
     private Vector2 playerPos = new Vector2(300, 200);
@@ -40,12 +42,15 @@ public class PlayScreen extends ScreenAdapter {
 
     private float stateTime = 0f;
     private float playerAttackTime = 0f;
-    private int playerAttackType = 0; // 1-LMB (Sword), 2-RMB (Combo), 3-Q (Bow)
+    private int playerAttackType = 0;
     private boolean isPlayerMoving = false, playerFacingLeft = false;
     private boolean isJungarSpawned = false;
     private boolean playerHitRegistered = false;
 
+    // Новая система уровней и победы
     private int jungarLevel = 1;
+    private boolean showWinMessage = false;
+    private float winMessageTimer = 0f;
     private Rectangle arenaTrigger = new Rectangle(850, 100, 400, 450);
 
     public PlayScreen(BatyrGame game) {
@@ -57,7 +62,10 @@ public class PlayScreen extends ScreenAdapter {
         shapeRenderer = new ShapeRenderer();
         mapTexture = new Texture(Gdx.files.internal("map.png"));
 
-        // Loading pixel HP bar textures from assets
+        // Инициализируем пиксельный шрифт и увеличиваем его масштаб
+        pixelFont = new BitmapFont();
+        pixelFont.getData().setScale(2.5f); // Делаем текст крупным
+
         playerHpTextures = new Texture[10];
         playerHpTextures[9] = new Texture(Gdx.files.internal("hp100.png"));
         playerHpTextures[8] = new Texture(Gdx.files.internal("hp90.png"));
@@ -70,7 +78,6 @@ public class PlayScreen extends ScreenAdapter {
         playerHpTextures[1] = new Texture(Gdx.files.internal("hp20.png"));
         playerHpTextures[0] = new Texture(Gdx.files.internal("HP10.png"));
 
-        // Fixed method calls by matching 6-argument signature
         playerIdleAnim = createAnim(new Texture(Gdx.files.internal("_idle.png")), 0, 10, 120, 80, 0.1f);
         playerRunAnim = createAnim(new Texture(Gdx.files.internal("_Run.png")), 0, 10, 120, 80, 0.08f);
 
@@ -84,8 +91,17 @@ public class PlayScreen extends ScreenAdapter {
         ScreenUtils.clear(0, 0, 0, 1);
         stateTime += delta;
 
-        // --- COMBAT CONTROLS (STRATEGY SELECTION) ---
-        if (playerAttackType == 0) {
+        // --- ЛОГИКА ТАЙМЕРА НАДПИСИ ПОБЕДЫ ---
+        if (showWinMessage) {
+            winMessageTimer += delta;
+            if (winMessageTimer > 3.0f) { // Текст висит ровно 3 секунды
+                showWinMessage = false;
+                winMessageTimer = 0f;
+            }
+        }
+
+        // --- УПРАВЛЕНИЕ АТАКАМИ (Блокируется, если празднуем победу) ---
+        if (playerAttackType == 0 && !showWinMessage) {
             if (Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
                 currentStrategy = new SwordAttack(attackSheet1);
                 playerAttackType = 1;
@@ -107,10 +123,9 @@ public class PlayScreen extends ScreenAdapter {
             }
         }
 
-        // Projectile Arrow Physical Update
+        // Логика полета стрелы
         if (activeBowAttack != null && activeBowAttack.hasArrow) {
             activeBowAttack.updateArrow(delta);
-
             if (isJungarSpawned && activeBowAttack.arrowPos.dst(currentEnemy.pos) < 50) {
                 currentEnemy.currentHp -= activeBowAttack.getDamage();
                 activeBowAttack.hasArrow = false;
@@ -121,7 +136,7 @@ public class PlayScreen extends ScreenAdapter {
             }
         }
 
-        // Execution of Melee Attacks (LMB / RMB)
+        // Нанесение урона в ближнем бою
         if (playerAttackType != 0 && playerAttackType != 3 && currentStrategy != null) {
             playerAttackTime += delta;
             if (!playerHitRegistered && playerAttackTime > 0.14f && isJungarSpawned) {
@@ -133,15 +148,14 @@ public class PlayScreen extends ScreenAdapter {
             if (playerAttackTime > currentStrategy.getDuration()) playerAttackType = 0;
         }
 
-        // Ranged Attack Duration Timer
         if (playerAttackType == 3 && currentStrategy != null) {
             playerAttackTime += delta;
             if (playerAttackTime > currentStrategy.getDuration()) playerAttackType = 0;
         }
 
-        // --- PLAYER CONTROLS & MOVEMENT ---
+        // --- ДВИЖЕНИЕ БАТЫРА (Тоже отключается во время победной паузы) ---
         isPlayerMoving = false;
-        if (playerAttackType == 0) {
+        if (playerAttackType == 0 && !showWinMessage) {
             Vector2 input = new Vector2();
             if (Gdx.input.isKeyPressed(Input.Keys.W)) { input.y += 1; isPlayerMoving = true; }
             if (Gdx.input.isKeyPressed(Input.Keys.S)) { input.y -= 1; isPlayerMoving = true; }
@@ -150,14 +164,15 @@ public class PlayScreen extends ScreenAdapter {
             if (isPlayerMoving) playerPos.add(input.nor().scl(250 * delta));
         }
 
-        // --- ENEMY IN-ZONE SPAWN (FACTORY METHOD) ---
-        if (!isJungarSpawned && arenaTrigger.contains(playerPos.x, playerPos.y) && jungarLevel <= 3) {
+        // --- СПАВН СЛЕДУЮЩЕГО ЛЕВЕЛА ПРИ ВХОДЕ В КРУГ ---
+        // Спавн сработает только если мы не показываем надпись победы прямо сейчас и уровень <= 3
+        if (!isJungarSpawned && !showWinMessage && arenaTrigger.contains(playerPos.x, playerPos.y) && jungarLevel <= 3) {
             isJungarSpawned = true;
             currentEnemy = EnemyFactory.createEnemy(jungarLevel, jungarSheet);
             currentEnemy.pos.set(1020, 320);
         }
 
-        // --- ENEMY ARTIFICIAL INTELLIGENCE ---
+        // --- ИИ ДЖУНГАРА ---
         if (isJungarSpawned) {
             float dist = currentEnemy.pos.dst(playerPos);
             currentEnemy.isMoving = false;
@@ -180,18 +195,21 @@ public class PlayScreen extends ScreenAdapter {
                 }
             }
 
+            // ТРИГГЕР ПОБЕДЫ: Моб повержен
             if (currentEnemy.currentHp <= 0) {
                 isJungarSpawned = false;
-                jungarLevel++;
-                playerPos.set(500, 200);
+                showWinMessage = true; // Запускаем надпись "You Win"
+                winMessageTimer = 0f;
+                jungarLevel++;         // Готовим следующий левел для нового захода в круг
+                playerPos.set(400, 250); // Отбрасываем Батыра назад на безопасную дистанцию
             }
         }
 
-        // --- TEXTURE AND SPRITE RENDERING ---
+        // --- ОТРИСОВКА ВСЕГО СПРАЙТ-БАТЧА ---
         batch.begin();
         batch.draw(mapTexture, 0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
 
-        // Draw Boss Sprite
+        // Рисуем Джунгара
         if (isJungarSpawned) {
             float w = 140 * currentEnemy.scale, h = 140 * currentEnemy.scale;
             Animation<TextureRegion> jAnim = currentEnemy.isAttacking ? currentEnemy.attackAnim : (currentEnemy.isMoving ? currentEnemy.runAnim : currentEnemy.idleAnim);
@@ -201,21 +219,36 @@ public class PlayScreen extends ScreenAdapter {
             batch.draw(jFrame, currentEnemy.pos.x - w/2, currentEnemy.pos.y - h/2, w, h);
         }
 
-        // Draw Player Sprite
+        // Рисуем Батыра
         Animation<TextureRegion> pAnim = (playerAttackType != 0) ? currentStrategy.getAnimation() : (isPlayerMoving ? playerRunAnim : playerIdleAnim);
         TextureRegion pFrame = pAnim.getKeyFrame(playerAttackType != 0 ? playerAttackTime : stateTime, playerAttackType == 0);
         if (playerFacingLeft && !pFrame.isFlipX()) pFrame.flip(true, false);
         if (!playerFacingLeft && pFrame.isFlipX()) pFrame.flip(false, false);
         batch.draw(pFrame, playerPos.x - 60, playerPos.y - 40, 120, 80);
 
-        // Draw Player UI Health Bar
+        // Рисуем UI здоровья Батыра
         int uiIndex = Math.max(0, Math.min(9, (int)(playerCurrentHp / 10) - 1));
         if (playerCurrentHp > 0) {
             batch.draw(playerHpTextures[uiIndex], 1100, 650, 160, 50);
         }
+
+        // ВЫВОД НАДПИСИ ПОБЕДЫ ПО ЦЕНТРУ ЭКРАНА С КРАСИВЫМ ШРИФТОМ
+        if (showWinMessage) {
+            pixelFont.setColor(Color.GOLD);
+            pixelFont.draw(batch, "YOU WIN!", 540, 420);
+
+            pixelFont.setColor(Color.WHITE);
+            // Если прошли все 3 уровня, пишем финальную надпись
+            if (jungarLevel > 3) {
+                pixelFont.draw(batch, "ALL LEVELS COMPLETED!", 400, 350);
+            } else {
+                pixelFont.draw(batch, "Moving to Level " + jungarLevel + "...", 440, 350);
+            }
+        }
+
         batch.end();
 
-        // --- SHAPE RENDERING (PROJECTILES & BOSS HP) ---
+        // --- ОТРИСОВКА СНАРЯДОВ И ХП БОССА ---
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
 
         if (activeBowAttack != null && activeBowAttack.hasArrow) {
@@ -234,7 +267,6 @@ public class PlayScreen extends ScreenAdapter {
         }
         shapeRenderer.end();
 
-        // Player Defeat Logic
         if (playerCurrentHp <= 0) {
             playerCurrentHp = playerMaxHp;
             playerPos.set(300, 200);
@@ -242,7 +274,6 @@ public class PlayScreen extends ScreenAdapter {
         }
     }
 
-    // Fixed: Takes 6 arguments to resolve internal compiler error
     private Animation<TextureRegion> createAnim(Texture sheet, int row, int cols, int width, int height, float duration) {
         TextureRegion[][] tmp = TextureRegion.split(sheet, width, height);
         Array<TextureRegion> frames = new Array<>(cols);
@@ -257,6 +288,7 @@ public class PlayScreen extends ScreenAdapter {
         batch.dispose();
         shapeRenderer.dispose();
         mapTexture.dispose();
+        pixelFont.dispose(); // Не забываем очистить память от шрифта
         attackSheet1.dispose();
         attackSheet2.dispose();
         jungarSheet.dispose();
