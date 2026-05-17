@@ -1,12 +1,17 @@
 package com.batyrlegacy.game.screens;
+
+
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.ScreenAdapter;
 import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.GL20; // Для поддержки прозрачности плашки
 import com.badlogic.gdx.graphics.OrthographicCamera;
+import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
-import com.badlogic.gdx.graphics.g2d.GlyphLayout; // Для идеального центрирования текста
+import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.utils.ScreenUtils;
 import com.badlogic.gdx.utils.viewport.FitViewport;
 import com.badlogic.gdx.utils.viewport.Viewport;
@@ -15,10 +20,12 @@ import com.batyrlegacy.game.BatyrGame;
 public class MenuScreen extends ScreenAdapter {
     private BatyrGame game;
     private SpriteBatch batch;
+    private ShapeRenderer shapeRenderer; // Для рисования защитной плашки под текстом
     private BitmapFont font;
     private GlyphLayout glyphLayout;
 
-    // Камера и Вьюпорт для центрирования меню на полный экран
+    private Texture backgroundTexture; // Текстура казахского орнамента
+
     private OrthographicCamera camera;
     private Viewport viewport;
 
@@ -29,12 +36,15 @@ public class MenuScreen extends ScreenAdapter {
     @Override
     public void show() {
         batch = new SpriteBatch();
+        shapeRenderer = new ShapeRenderer();
         glyphLayout = new GlyphLayout();
 
         font = new BitmapFont();
-        font.getData().setScale(2.5f); // Крупный красивый шрифт
+        font.getData().setScale(2.5f);
 
-        // Настраиваем камеру и FitViewport на наше стандартное разрешение 1280x720
+        // ЗАГРУЗКА КАРТИНКИ: Сохрани орнамент в assets под именем menu_bg.png
+        backgroundTexture = new Texture(Gdx.files.internal("menu_bg.jpg"));
+
         camera = new OrthographicCamera();
         viewport = new FitViewport(1280, 720, camera);
         viewport.apply();
@@ -43,48 +53,65 @@ public class MenuScreen extends ScreenAdapter {
 
     @Override
     public void render(float delta) {
-        // Заливаем фон темно-зеленым/болотным цветом, как у тебя на скрине
-        ScreenUtils.clear(0.1f, 0.2f, 0.1f, 1);
+        // Очищаем буфер экрана в черный цвет
+        ScreenUtils.clear(0, 0, 0, 1);
 
-        // Обновляем камеру и привязываем её матрицу к отрисовке
         camera.update();
         batch.setProjectionMatrix(camera.combined);
+        shapeRenderer.setProjectionMatrix(camera.combined);
 
-        // Переход по экранам
+        // Обработка нажатий клавиш
         if (Gdx.input.isKeyJustPressed(Input.Keys.ENTER)) {
-            game.setScreen(new PlayScreen(game)); // Запуск игры
+            game.setScreen(new PlayScreen(game));
         }
         if (Gdx.input.isKeyJustPressed(Input.Keys.ESCAPE)) {
-            Gdx.app.exit(); // Выход из игры
+            Gdx.app.exit();
         }
 
+        // --- 1. РИСУЕМ КАЗАХСКИЙ ОРНАМЕНТ НА ВЕСЬ ЭКРАН ---
+        batch.begin();
+        batch.draw(backgroundTexture, 0, 0, 1280, 720);
+        batch.end();
+
+        // --- 2. РИСУЕМ ПОЛУПРОЗРАЧНУЮ ЧЕРНУЮ ПОДЛОЖКУ ДЛЯ ЧИТАЕМОСТИ ТЕКСТА ---
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        // Черный цвет с альфа-прозрачностью 75% (0.75f) — идеально затенит центр
+        shapeRenderer.setColor(new Color(0, 0, 0, 0.75f));
+        // Рисуем плашку по центру шириной 700 пикселей и высотой 400 пикселей
+        shapeRenderer.rect(640f - 350f, 360f - 200f, 700, 400);
+        shapeRenderer.end();
+
+        Gdx.gl.glDisable(GL20.GL_BLEND);
+
+        // --- 3. ОТРИСОВКА МАТЕМАТИЧЕСКИ ОТЦЕНТРИРОВАННОГО ТЕКСТА ПОВЕРХ ПЛАШКИ ---
         batch.begin();
 
-        // 1. Отрисовка названия игры "BATYR LEGACY"
+        // Название игры "BATYR LEGACY"
         font.setColor(Color.GOLD);
         String title = "BATYR LEGACY";
         glyphLayout.setText(font, title);
-        // Виртуальный центр по X = 1280 / 2 = 640. Вычитаем половину ширины текста
         float titleX = 640f - (glyphLayout.width / 2f);
-        font.draw(batch, title, titleX, 450);
+        font.draw(batch, title, titleX, 480);
 
-        // 2. Отрисовка кнопки "PRESS ENTER TO START"
+        // Кнопка "PRESS ENTER TO START"
         font.setColor(Color.WHITE);
         String startText = "PRESS ENTER TO START";
         glyphLayout.setText(font, startText);
         float startX = 640f - (glyphLayout.width / 2f);
-        font.draw(batch, startText, startX, 320);
+        font.draw(batch, startText, startX, 350);
 
-        // 3. Отрисовка кнопки "PRESS ESC TO EXIT"
+        // Кнопка "PRESS ESC TO EXIT"
         String exitText = "PRESS ESC TO EXIT";
         glyphLayout.setText(font, exitText);
         float exitX = 640f - (glyphLayout.width / 2f);
-        font.draw(batch, exitText, exitX, 220);
+        font.draw(batch, exitText, exitX, 250);
 
         batch.end();
     }
 
-    // Обязательный метод, чтобы вьюпорт пересчитывал пропорции при разворачивании на весь экран
     @Override
     public void resize(int width, int height) {
         viewport.update(width, height);
@@ -93,6 +120,8 @@ public class MenuScreen extends ScreenAdapter {
     @Override
     public void dispose() {
         batch.dispose();
+        shapeRenderer.dispose();
         font.dispose();
+        backgroundTexture.dispose();
     }
 }
