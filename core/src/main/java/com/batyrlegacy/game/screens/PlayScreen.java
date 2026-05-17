@@ -10,6 +10,7 @@ import com.badlogic.gdx.graphics.OrthographicCamera;
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.Animation;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
+import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
@@ -28,12 +29,16 @@ import com.batyrlegacy.game.enemy.Enemy;
 import com.batyrlegacy.game.enemy.EnemyFactory;
 
 public class PlayScreen extends ScreenAdapter {
+    private BatyrGame game;
     private SpriteBatch batch;
     private ShapeRenderer shapeRenderer;
-    private Texture mapTexture;
-    private BitmapFont pixelFont;
 
-    // Камера и Вьюпорт для исправления бага полноэкранного режима
+    private Texture mapTexture1;
+    private Texture mapTexture2;
+    private int currentMap = 1;
+
+    private BitmapFont pixelFont;
+    private GlyphLayout glyphLayout;
     private OrthographicCamera camera;
     private Viewport viewport;
 
@@ -45,7 +50,9 @@ public class PlayScreen extends ScreenAdapter {
     private BowAttack activeBowAttack;
     private Enemy currentEnemy;
 
-    private Vector2 playerPos = new Vector2(300, 200);
+    private final Vector2 spawnPos = new Vector2(260, 560);
+    private Vector2 playerPos = new Vector2(spawnPos.x, spawnPos.y);
+
     private float playerMaxHp = 100;
     private float playerCurrentHp = 100;
 
@@ -61,28 +68,30 @@ public class PlayScreen extends ScreenAdapter {
     private boolean showDeathMessage = false;
 
     private int jungarLevel = 1;
+    private final int maxLevelsOnFirstMap = 5;
     private boolean showWinMessage = false;
-    private float winMessageTimer = 0f;
     private Rectangle arenaTrigger = new Rectangle(850, 100, 400, 450);
 
     public PlayScreen(BatyrGame game) {
+        this.game = game;
     }
 
     @Override
     public void show() {
         batch = new SpriteBatch();
         shapeRenderer = new ShapeRenderer();
-        mapTexture = new Texture(Gdx.files.internal("map.png"));
+        glyphLayout = new GlyphLayout();
 
-        // НАСТРОЙКА СИСТЕМЫ МАСШТАБИРОВАНИЯ ЭКРАНА
+        mapTexture1 = new Texture(Gdx.files.internal("map.png"));
+
         camera = new OrthographicCamera();
-        // Фиксируем виртуальное разрешение 1280x720. Теперь координаты не уедут!
         viewport = new FitViewport(1280, 720, camera);
         viewport.apply();
         camera.position.set(1280 / 2f, 720 / 2f, 0);
 
         pixelFont = new BitmapFont();
-        pixelFont.getData().setScale(2.5f);
+        // Снизили масштаб до 1.3f (раньше было 2.5f) — теперь текст маленький и аккуратный!
+        pixelFont.getData().setScale(1.3f);
 
         playerHpTextures = new Texture[10];
         playerHpTextures[9] = new Texture(Gdx.files.internal("hp100.png"));
@@ -110,40 +119,47 @@ public class PlayScreen extends ScreenAdapter {
 
     @Override
     public void render(float delta) {
-        // Очищаем буфер экрана
         ScreenUtils.clear(0, 0, 0, 1);
 
-        // Обновляем матрицы камеры под вьюпорт
         camera.update();
         batch.setProjectionMatrix(camera.combined);
         shapeRenderer.setProjectionMatrix(camera.combined);
 
         stateTime += delta;
 
-        // --- ТАЙМЕРЫ ПОБЕДЫ И СМЕРТИ ---
-        if (showWinMessage) {
-            winMessageTimer += delta;
-            if (winMessageTimer > 3.0f) { showWinMessage = false; winMessageTimer = 0f; }
-        }
-
         if (isPlayerDead) {
             deathTimer += delta;
-            if (deathTimer > 2.5f && !showDeathMessage) showDeathMessage = true;
-            if (deathTimer > 6.5f) {
-                isPlayerDead = false;
-                showDeathMessage = false;
-                deathTimer = 0f;
-                playerCurrentHp = playerMaxHp;
-                playerPos.set(300, 200);
-                isJungarSpawned = false;
-                stateTime = 0f;
-                playerDeathAnim.setPlayMode(Animation.PlayMode.NORMAL);
+            if (deathTimer > 1.5f) showDeathMessage = true;
+            if (showDeathMessage && Gdx.input.isKeyJustPressed(Input.Keys.ENTER)) {
+                restartLevel();
             }
         }
 
-        boolean controlsBlocked = showWinMessage || isPlayerDead;
+        if (showWinMessage && Gdx.input.isKeyJustPressed(Input.Keys.ENTER)) {
+            if (currentMap == 1) {
+                if (jungarLevel < maxLevelsOnFirstMap) {
+                    jungarLevel++;
+                    showWinMessage = false;
+                    isJungarSpawned = false;
+                } else {
+                    currentMap = 2;
+                    jungarLevel = 6;
+                    showWinMessage = false;
+                    isJungarSpawned = false;
+                    playerPos.set(spawnPos.x, spawnPos.y);
+                }
+            } else {
+                currentMap = 1;
+                jungarLevel = 1;
+                showWinMessage = false;
+                isJungarSpawned = false;
+                playerCurrentHp = playerMaxHp;
+                playerPos.set(spawnPos.x, spawnPos.y);
+            }
+        }
 
-        // --- УПРАВЛЕНИЕ АТАКАМИ ---
+        boolean controlsBlocked = showWinMessage || showDeathMessage || isPlayerDead;
+
         if (playerAttackType == 0 && !controlsBlocked) {
             if (Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
                 currentStrategy = new SwordAttack(attackSheet1);
@@ -159,7 +175,6 @@ public class PlayScreen extends ScreenAdapter {
             }
         }
 
-        // Физика стрелы
         if (activeBowAttack != null && activeBowAttack.hasArrow) {
             activeBowAttack.updateArrow(delta);
             if (isJungarSpawned && activeBowAttack.arrowPos.dst(currentEnemy.pos) < 50) {
@@ -170,7 +185,6 @@ public class PlayScreen extends ScreenAdapter {
             }
         }
 
-        // Ближний бой
         if (playerAttackType != 0 && playerAttackType != 3 && currentStrategy != null && !isPlayerDead) {
             playerAttackTime += delta;
             if (!playerHitRegistered && playerAttackTime > 0.14f && isJungarSpawned) {
@@ -187,7 +201,6 @@ public class PlayScreen extends ScreenAdapter {
             if (playerAttackTime > currentStrategy.getDuration()) playerAttackType = 0;
         }
 
-        // Движение
         isPlayerMoving = false;
         if (playerAttackType == 0 && !controlsBlocked) {
             Vector2 input = new Vector2();
@@ -198,15 +211,13 @@ public class PlayScreen extends ScreenAdapter {
             if (isPlayerMoving) playerPos.add(input.nor().scl(250 * delta));
         }
 
-        // Спавн моба
-        if (!isJungarSpawned && !controlsBlocked && arenaTrigger.contains(playerPos.x, playerPos.y) && jungarLevel <= 3) {
+        if (!isJungarSpawned && !controlsBlocked && arenaTrigger.contains(playerPos.x, playerPos.y)) {
             isJungarSpawned = true;
             currentEnemy = EnemyFactory.createEnemy(jungarLevel, jungarSheet);
             currentEnemy.pos.set(1020, 320);
         }
 
-        // Логика ИИ
-        if (isJungarSpawned) {
+        if (isJungarSpawned && !showWinMessage) {
             float dist = currentEnemy.pos.dst(playerPos);
             currentEnemy.isMoving = false;
 
@@ -232,22 +243,51 @@ public class PlayScreen extends ScreenAdapter {
             }
 
             if (currentEnemy.currentHp <= 0 && !isPlayerDead) {
-                isJungarSpawned = false; showWinMessage = true; winMessageTimer = 0f; jungarLevel++; playerPos.set(400, 250);
+                showWinMessage = true;
+                playerPos.set(400, 250);
             }
         }
 
-        // --- 1. ОТРИСОВКА МИРА ---
+        // --- ГРАФИКА МИРА ---
         batch.begin();
-        // Используем жесткие виртуальные размеры под текстуру карты
-        batch.draw(mapTexture, 0, 0, 1280, 720);
+        if (currentMap == 1) {
+            batch.draw(mapTexture1, 0, 0, 1280, 720);
+        } else {
+            if (mapTexture2 != null) batch.draw(mapTexture2, 0, 0, 1280, 720);
+        }
 
-        if (isJungarSpawned) {
+        if (isJungarSpawned && !showWinMessage) {
             float w = 140 * currentEnemy.scale, h = 140 * currentEnemy.scale;
             Animation<TextureRegion> jAnim = currentEnemy.isAttacking ? currentEnemy.attackAnim : (currentEnemy.isMoving ? currentEnemy.runAnim : currentEnemy.idleAnim);
             TextureRegion jFrame = jAnim.getKeyFrame(currentEnemy.isAttacking ? currentEnemy.attackTime : stateTime, !currentEnemy.isAttacking);
             if (playerPos.x < currentEnemy.pos.x && !jFrame.isFlipX()) jFrame.flip(true, false);
             if (playerPos.x > currentEnemy.pos.x && jFrame.isFlipX()) jFrame.flip(false, false);
             batch.draw(jFrame, currentEnemy.pos.x - w/2, currentEnemy.pos.y - h/2, w, h);
+
+            // --- ИСПРАВЛЕННЫЙ ТЕКСТ НАД ГОЛОВОЙ (НА АНГЛИЙСКОМ И МЕНЬШЕ) ---
+            String jungarTitle;
+            Color titleColor;
+
+            // Масштабируем размер шрифта специально для головы (делаем его компактным)
+            pixelFont.getData().setScale(1.0f);
+
+            if (jungarLevel == maxLevelsOnFirstMap || jungarLevel == 6) {
+                jungarTitle = "JUNGAR WAR CHIEF (BOSS)";
+                titleColor = Color.RED;
+            } else {
+                jungarTitle = "JUNGAR LVL " + jungarLevel;
+                titleColor = new Color(1, 1 - (jungarLevel * 0.15f), 0, 1);
+            }
+
+            pixelFont.setColor(titleColor);
+            glyphLayout.setText(pixelFont, jungarTitle);
+            float titleX = currentEnemy.pos.x - glyphLayout.width / 2;
+            float titleY = currentEnemy.pos.y + (50 * currentEnemy.scale);
+
+            pixelFont.draw(batch, jungarTitle, titleX, titleY);
+
+            // Возвращаем масштаб обратно для системных экранов
+            pixelFont.getData().setScale(2.5f);
         }
 
         Animation<TextureRegion> pAnim;
@@ -272,43 +312,50 @@ public class PlayScreen extends ScreenAdapter {
         }
         batch.draw(pFrame, playerPos.x - 60, playerPos.y - 40, 120, 80);
 
-        // Интерфейс ХП Батыра (теперь жестко привязан к правому углу в разрешении 1280)
         int uiIndex = Math.max(0, Math.min(9, (int)(playerCurrentHp / 10) - 1));
         if (playerCurrentHp > 0) {
             batch.draw(playerHpTextures[uiIndex], 1100, 650, 160, 50);
         }
         batch.end();
 
-        // --- 2. ЭФФЕКТЫ ЗАТЕМНЕНИЯ ЭКРАНА ---
         if (showWinMessage || showDeathMessage) {
             Gdx.gl.glEnable(GL20.GL_BLEND);
             Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
             shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
-            shapeRenderer.setColor(new Color(0, 0, 0, 0.5f));
-            shapeRenderer.rect(0, 0, 1280, 720); // На весь виртуальный экран
+            shapeRenderer.setColor(new Color(0, 0, 0, 0.65f));
+            shapeRenderer.rect(0, 0, 1280, 720);
             shapeRenderer.end();
             Gdx.gl.glDisable(GL20.GL_BLEND);
         }
 
-        // --- 3. ОТРИСОВКА ТЕКСТА ---
         batch.begin();
         if (showWinMessage) {
-            pixelFont.setColor(Color.GOLD); pixelFont.draw(batch, "YOU WIN!", 540, 420);
+            pixelFont.setColor(Color.GOLD);
+            pixelFont.draw(batch, "YOU WIN!", 540, 420);
             pixelFont.setColor(Color.WHITE);
-            if (jungarLevel > 3) pixelFont.draw(batch, "ALL LEVELS COMPLETED!", 400, 350);
-            else pixelFont.draw(batch, "Moving to Level " + jungarLevel + "...", 440, 350);
+
+            if (currentMap == 1) {
+                if (jungarLevel < maxLevelsOnFirstMap) {
+                    pixelFont.draw(batch, "Stage " + jungarLevel + " Passed! Press ENTER for next wave", 300, 350);
+                } else {
+                    pixelFont.draw(batch, "Press ENTER to go to the next map", 380, 350);
+                }
+            } else {
+                pixelFont.draw(batch, "ALL LEVELS COMPLETED! Press ENTER to restart game", 250, 350);
+            }
         } else if (showDeathMessage) {
-            pixelFont.setColor(Color.GOLD); pixelFont.draw(batch, "YOU DIED!", 540, 420);
-            pixelFont.setColor(Color.WHITE); pixelFont.draw(batch, "Defeat is not the end. Respawning...", 360, 350);
+            pixelFont.setColor(Color.RED);
+            pixelFont.draw(batch, "YOU DIED!", 540, 420);
+            pixelFont.setColor(Color.WHITE);
+            pixelFont.draw(batch, "Press ENTER to restart", 460, 350);
         }
         batch.end();
 
-        // Геометрия стрел и ХП босса
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
         if (activeBowAttack != null && activeBowAttack.hasArrow) {
             shapeRenderer.setColor(Color.YELLOW); shapeRenderer.rect(activeBowAttack.arrowPos.x, activeBowAttack.arrowPos.y, 15, 4);
         }
-        if (isJungarSpawned) {
+        if (isJungarSpawned && !showWinMessage) {
             float jBarWidth = 70 * currentEnemy.scale;
             float jBarX = currentEnemy.pos.x - jBarWidth / 2;
             float jBarY = currentEnemy.pos.y + (65 * currentEnemy.scale);
@@ -318,10 +365,22 @@ public class PlayScreen extends ScreenAdapter {
         shapeRenderer.end();
     }
 
-    // КРИТИЧЕСКИ ВАЖНЫЙ МЕТОД ДЛЯ ПОЛНОЭКРАННОГО РЕЖИМА
+    private void restartLevel() {
+        isPlayerDead = false;
+        showDeathMessage = false;
+        deathTimer = 0f;
+        playerCurrentHp = playerMaxHp;
+        playerPos.set(spawnPos.x, spawnPos.y);
+        isJungarSpawned = false;
+        stateTime = 0f;
+        playerDeathAnim.setPlayMode(Animation.PlayMode.NORMAL);
+
+        if (currentMap == 1) jungarLevel = 1;
+        else jungarLevel = 6;
+    }
+
     @Override
     public void resize(int width, int height) {
-        // Вьюпорт обновляет свои размеры при растягивании окна, сохраняя пропорции
         viewport.update(width, height);
     }
 
@@ -336,7 +395,8 @@ public class PlayScreen extends ScreenAdapter {
     public void dispose() {
         batch.dispose();
         shapeRenderer.dispose();
-        mapTexture.dispose();
+        mapTexture1.dispose();
+        if (mapTexture2 != null) mapTexture2.dispose();
         pixelFont.dispose();
         attackSheet1.dispose(); attackSheet2.dispose();
         jungarSheet.dispose(); deathSheet.dispose();
