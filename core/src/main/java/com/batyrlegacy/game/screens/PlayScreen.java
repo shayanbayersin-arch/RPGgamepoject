@@ -4,6 +4,7 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 import com.badlogic.gdx.ScreenAdapter;
 import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.GL20; // Импорт для поддержки прозрачности
 import com.badlogic.gdx.graphics.Texture;
 import com.badlogic.gdx.graphics.g2d.Animation;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
@@ -26,7 +27,7 @@ public class PlayScreen extends ScreenAdapter {
     private SpriteBatch batch;
     private ShapeRenderer shapeRenderer;
     private Texture mapTexture;
-    private BitmapFont pixelFont; // Шрифт для вывода надписи победы
+    private BitmapFont pixelFont;
 
     private Texture attackSheet1, attackSheet2, jungarSheet;
     private Texture[] playerHpTextures;
@@ -47,7 +48,6 @@ public class PlayScreen extends ScreenAdapter {
     private boolean isJungarSpawned = false;
     private boolean playerHitRegistered = false;
 
-    // Новая система уровней и победы
     private int jungarLevel = 1;
     private boolean showWinMessage = false;
     private float winMessageTimer = 0f;
@@ -62,9 +62,8 @@ public class PlayScreen extends ScreenAdapter {
         shapeRenderer = new ShapeRenderer();
         mapTexture = new Texture(Gdx.files.internal("map.png"));
 
-        // Инициализируем пиксельный шрифт и увеличиваем его масштаб
         pixelFont = new BitmapFont();
-        pixelFont.getData().setScale(2.5f); // Делаем текст крупным
+        pixelFont.getData().setScale(2.5f);
 
         playerHpTextures = new Texture[10];
         playerHpTextures[9] = new Texture(Gdx.files.internal("hp100.png"));
@@ -91,16 +90,16 @@ public class PlayScreen extends ScreenAdapter {
         ScreenUtils.clear(0, 0, 0, 1);
         stateTime += delta;
 
-        // --- ЛОГИКА ТАЙМЕРА НАДПИСИ ПОБЕДЫ ---
+        // Таймер победы
         if (showWinMessage) {
             winMessageTimer += delta;
-            if (winMessageTimer > 3.0f) { // Текст висит ровно 3 секунды
+            if (winMessageTimer > 3.0f) {
                 showWinMessage = false;
                 winMessageTimer = 0f;
             }
         }
 
-        // --- УПРАВЛЕНИЕ АТАКАМИ (Блокируется, если празднуем победу) ---
+        // Блокировка ввода во время триумфа
         if (playerAttackType == 0 && !showWinMessage) {
             if (Gdx.input.isButtonJustPressed(Input.Buttons.LEFT)) {
                 currentStrategy = new SwordAttack(attackSheet1);
@@ -123,7 +122,7 @@ public class PlayScreen extends ScreenAdapter {
             }
         }
 
-        // Логика полета стрелы
+        // Обновление физики стрелы
         if (activeBowAttack != null && activeBowAttack.hasArrow) {
             activeBowAttack.updateArrow(delta);
             if (isJungarSpawned && activeBowAttack.arrowPos.dst(currentEnemy.pos) < 50) {
@@ -136,7 +135,7 @@ public class PlayScreen extends ScreenAdapter {
             }
         }
 
-        // Нанесение урона в ближнем бою
+        // Урон ближнего боя
         if (playerAttackType != 0 && playerAttackType != 3 && currentStrategy != null) {
             playerAttackTime += delta;
             if (!playerHitRegistered && playerAttackTime > 0.14f && isJungarSpawned) {
@@ -153,7 +152,7 @@ public class PlayScreen extends ScreenAdapter {
             if (playerAttackTime > currentStrategy.getDuration()) playerAttackType = 0;
         }
 
-        // --- ДВИЖЕНИЕ БАТЫРА (Тоже отключается во время победной паузы) ---
+        // Движение игрока
         isPlayerMoving = false;
         if (playerAttackType == 0 && !showWinMessage) {
             Vector2 input = new Vector2();
@@ -164,15 +163,14 @@ public class PlayScreen extends ScreenAdapter {
             if (isPlayerMoving) playerPos.add(input.nor().scl(250 * delta));
         }
 
-        // --- СПАВН СЛЕДУЮЩЕГО ЛЕВЕЛА ПРИ ВХОДЕ В КРУГ ---
-        // Спавн сработает только если мы не показываем надпись победы прямо сейчас и уровень <= 3
+        // Спавн моба
         if (!isJungarSpawned && !showWinMessage && arenaTrigger.contains(playerPos.x, playerPos.y) && jungarLevel <= 3) {
             isJungarSpawned = true;
             currentEnemy = EnemyFactory.createEnemy(jungarLevel, jungarSheet);
             currentEnemy.pos.set(1020, 320);
         }
 
-        // --- ИИ ДЖУНГАРА ---
+        // Логика врага
         if (isJungarSpawned) {
             float dist = currentEnemy.pos.dst(playerPos);
             currentEnemy.isMoving = false;
@@ -195,21 +193,20 @@ public class PlayScreen extends ScreenAdapter {
                 }
             }
 
-            // ТРИГГЕР ПОБЕДЫ: Моб повержен
+            // Победный триггер
             if (currentEnemy.currentHp <= 0) {
                 isJungarSpawned = false;
-                showWinMessage = true; // Запускаем надпись "You Win"
+                showWinMessage = true;
                 winMessageTimer = 0f;
-                jungarLevel++;         // Готовим следующий левел для нового захода в круг
-                playerPos.set(400, 250); // Отбрасываем Батыра назад на безопасную дистанцию
+                jungarLevel++;
+                playerPos.set(400, 250);
             }
         }
 
-        // --- ОТРИСОВКА ВСЕГО СПРАЙТ-БАТЧА ---
+        // --- 1. ОТРИСОВКА ИГРОВОГО МИРА ---
         batch.begin();
         batch.draw(mapTexture, 0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
 
-        // Рисуем Джунгара
         if (isJungarSpawned) {
             float w = 140 * currentEnemy.scale, h = 140 * currentEnemy.scale;
             Animation<TextureRegion> jAnim = currentEnemy.isAttacking ? currentEnemy.attackAnim : (currentEnemy.isMoving ? currentEnemy.runAnim : currentEnemy.idleAnim);
@@ -219,43 +216,54 @@ public class PlayScreen extends ScreenAdapter {
             batch.draw(jFrame, currentEnemy.pos.x - w/2, currentEnemy.pos.y - h/2, w, h);
         }
 
-        // Рисуем Батыра
         Animation<TextureRegion> pAnim = (playerAttackType != 0) ? currentStrategy.getAnimation() : (isPlayerMoving ? playerRunAnim : playerIdleAnim);
         TextureRegion pFrame = pAnim.getKeyFrame(playerAttackType != 0 ? playerAttackTime : stateTime, playerAttackType == 0);
         if (playerFacingLeft && !pFrame.isFlipX()) pFrame.flip(true, false);
         if (!playerFacingLeft && pFrame.isFlipX()) pFrame.flip(false, false);
         batch.draw(pFrame, playerPos.x - 60, playerPos.y - 40, 120, 80);
 
-        // Рисуем UI здоровья Батыра
         int uiIndex = Math.max(0, Math.min(9, (int)(playerCurrentHp / 10) - 1));
         if (playerCurrentHp > 0) {
             batch.draw(playerHpTextures[uiIndex], 1100, 650, 160, 50);
         }
+        batch.end();
 
-        // ВЫВОД НАДПИСИ ПОБЕДЫ ПО ЦЕНТРУ ЭКРАНА С КРАСИВЫМ ШРИФТОМ
+        // --- 2. ЭФФЕКТ ПРИТЕМНЕНИЯ ЭКРАНА (SHAPERENDERER В РЕЖИМЕ BLENDING) ---
         if (showWinMessage) {
+            // Включаем альфа-смешивание OpenGl для работы прозрачности
+            Gdx.gl.glEnable(GL20.GL_BLEND);
+            Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+
+            shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+            // Рисуем черный прямоугольник на весь экран, альфа = 0.5f (50% затемнения)
+            shapeRenderer.setColor(new Color(0, 0, 0, 0.5f));
+            shapeRenderer.rect(0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+            shapeRenderer.end();
+
+            Gdx.gl.glDisable(GL20.GL_BLEND); // Выключаем смешивание, чтобы не портить другие фигуры
+        }
+
+        // --- 3. ОТРИСОВКА ТЕКСТА ПОБЕДЫ ПОВЕРХ ЗАТЕМНЕНИЯ ---
+        if (showWinMessage) {
+            batch.begin();
             pixelFont.setColor(Color.GOLD);
             pixelFont.draw(batch, "YOU WIN!", 540, 420);
 
             pixelFont.setColor(Color.WHITE);
-            // Если прошли все 3 уровня, пишем финальную надпись
             if (jungarLevel > 3) {
                 pixelFont.draw(batch, "ALL LEVELS COMPLETED!", 400, 350);
             } else {
                 pixelFont.draw(batch, "Moving to Level " + jungarLevel + "...", 440, 350);
             }
+            batch.end();
         }
 
-        batch.end();
-
-        // --- ОТРИСОВКА СНАРЯДОВ И ХП БОССА ---
+        // Обычные интерфейсы стрел и здоровья босса
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
-
         if (activeBowAttack != null && activeBowAttack.hasArrow) {
             shapeRenderer.setColor(Color.YELLOW);
             shapeRenderer.rect(activeBowAttack.arrowPos.x, activeBowAttack.arrowPos.y, 15, 4);
         }
-
         if (isJungarSpawned) {
             float jBarWidth = 70 * currentEnemy.scale;
             float jBarX = currentEnemy.pos.x - jBarWidth / 2;
@@ -288,7 +296,7 @@ public class PlayScreen extends ScreenAdapter {
         batch.dispose();
         shapeRenderer.dispose();
         mapTexture.dispose();
-        pixelFont.dispose(); // Не забываем очистить память от шрифта
+        pixelFont.dispose();
         attackSheet1.dispose();
         attackSheet2.dispose();
         jungarSheet.dispose();
